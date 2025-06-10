@@ -1,9 +1,15 @@
 version: '3.8'
 
+networks:
+  fraudetect-net:
+    driver: bridge
+
 services:
   zookeeper:
     image: confluentinc/cp-zookeeper:7.3.0
     container_name: zookeeper
+    networks:
+      - fraudetect-net
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
@@ -13,6 +19,8 @@ services:
   kafka:
     image: confluentinc/cp-kafka:7.3.0
     container_name: kafka
+    networks:
+      - fraudetect-net
     depends_on:
       - zookeeper
     ports:
@@ -29,12 +37,16 @@ services:
   redis:
     image: redis:6.2-alpine
     container_name: redis
+    networks:
+      - fraudetect-net
     ports:
       - '6379:6379'
 
   mlflow:
     image: python:3.8-slim
     container_name: mlflow_server
+    networks:
+      - fraudetect-net
     command: >
       sh -c "pip install mlflow boto3 &&
              mlflow server --host 0.0.0.0 --port 5000 --default-artifact-root /mlruns"
@@ -50,6 +62,8 @@ services:
   flink-jobmanager:
     image: pyflink/playgrounds:1.17-latest
     container_name: flink_jobmanager
+    networks:
+      - fraudetect-net
     ports:
       - "8081:8081"
     command: jobmanager
@@ -61,6 +75,8 @@ services:
   flink-taskmanager:
     image: pyflink/playgrounds:1.17-latest
     container_name: flink_taskmanager
+    networks:
+      - fraudetect-net
     depends_on:
       - flink-jobmanager
     command: taskmanager
@@ -74,6 +90,8 @@ services:
   spark-master:
     image: bde2020/spark-master:3.3.0-hadoop3.3
     container_name: spark_master
+    networks:
+      - fraudetect-net
     ports:
       - "8080:8080"
       - "7077:7077"
@@ -84,6 +102,8 @@ services:
   spark-worker:
     image: bde2020/spark-worker:3.3.0-hadoop3.3
     container_name: spark_worker
+    networks:
+      - fraudetect-net
     depends_on:
       - spark-master
     environment:
@@ -91,3 +111,33 @@ services:
       - "SPARK_PUBLIC_DNS=localhost"
     ports:
       - "8082:8081"
+
+  prometheus:
+    image: prom/prometheus:v2.37.1
+    container_name: prometheus
+    networks:
+      - fraudetect-net
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+
+  grafana:
+    image: grafana/grafana:8.5.2
+    container_name: grafana
+    networks:
+      - fraudetect-net
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./monitoring/grafana_dashboards:/var/lib/grafana/dashboards
+      - ./monitoring/grafana_datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/fraud_detection.json

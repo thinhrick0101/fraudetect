@@ -4,110 +4,106 @@ This project is a comprehensive, real-time fraud detection system utilizing a mo
 
 ## Architecture Overview
 
-The system follows a distributed, microservices-oriented architecture.
+The system follows a distributed, streaming-first architecture.
 
 ```
-Transaction Stream --> Kafka --> Flink (Validation & Preprocessing) --> Kafka
-   |
-   +--> Spark (Batch Feature Engineering) --> Redis (Online Store)
-   |
-   +--> Ray/MLflow (Model Training/Tuning) --> MLflow Model Registry
-           |
-           +--> Flask API (Real-time Inference)
-                 |
-                 +--> Redis (Feature Retrieval)
-                 +--> MLflow Model (Inference)
+Transaction Stream -> Kafka -> Flink (Validation & Enrichment) -> Kafka
+                               |
+                               +-> Spark (Streaming Feature Engineering) -> Redis (Online Store)
+                               |                                           |
+                               |                                           +-> Parquet (Offline Training Data)
+                               |
+                               +-> Ray/MLflow (Model Training) -> MLflow Model Registry
+                                     |
+                                     +-> Flask API (Real-time Inference) -> Prometheus & Grafana
+                                           |
+                                           +-> Redis (Feature Retrieval)
+                                           +-> MLflow Model (Inference)
 ```
 
 ### Core Components:
 
-*   **Kafka**: Acts as the central nervous system of the platform, providing a high-throughput, distributed message bus for real-time data streams.
-*   **Flink**: Provides real-time stream processing capabilities for data validation, enrichment, and simple transformations on the incoming transaction stream.
-*   **Spark**: Used for large-scale batch processing to generate historical features from validated transaction data.
-*   **Redis**: Serves as a low-latency online feature store, making user-level features available to the inference service in real-time.
+*   **Kafka**: The central message bus for real-time data streams (`transactions` and `validated_transactions` topics).
+*   **Flink**: Provides real-time stream processing for data validation and enrichment (e.g., flagging suspicious amounts).
+*   **Spark**: Runs a Structured Streaming job to generate user-level features from the validated transaction stream.
+*   **Redis**: Serves as a low-latency online feature store for real-time inference.
+*   **Parquet Files**: Historical features are persisted to disk in `data/processed/features` to be used as a training dataset.
 *   **Ray**: A distributed execution framework used to scale up model training and hyperparameter tuning.
-*   **MLflow**: Manages the end-to-end machine learning lifecycle, including experiment tracking, model packaging, and a model registry for versioning and deployment.
-*   **Flask Service**: A lightweight web service that exposes a REST API for real-time fraud predictions.
-
-## Project Structure
-
-```
-fraudetect/
-│
-├── docker/
-│   ├── docker-compose.yml
-│   └── Dockerfile
-├── kafka/
-│   ├── producer.py
-│   └── consumer.py
-├── flink/
-│   ├── transaction_validation.py
-│   └── utils.py
-├── spark/
-│   ├── feature_engineering.py
-│   └── spark_submit.sh
-├── ray_mlflow/
-│   ├── train.py
-│   └── model_utils.py
-├── inference_service/
-│   ├── app.py
-│   └── requirements.txt
-├── ... (and other directories)
-```
+*   **MLflow**: Manages the end-to-end machine learning lifecycle, including experiment tracking and a model registry.
+*   **Flask Service**: A lightweight, instrumented web service that exposes a REST API for real-time fraud predictions.
+*   **Prometheus**: Scrapes metrics from the inference service to monitor its health and performance.
+*   **Grafana**: Provides pre-built dashboards to visualize the metrics collected by Prometheus.
 
 ## Getting Started
 
 ### Prerequisites
 
 *   Docker and Docker Compose
-*   Python 3.8+
-*   An environment to run the services (local machine, cloud VMs, Kubernetes).
+*   Python 3.8+ and `pip`
 
 ### Setup
 
 1.  **Clone the repository:**
     ```bash
     git clone <repository_url>
-    cd fraud-detection-system
+    cd frauddetect
     ```
-2.  **Configure Environment:**
-    Update the configuration files in `configs/` to match your environment (e.g., Kafka brokers, Redis host).
-3.  **Build and Start Services:**
-    Use the provided `docker-compose.yml` to start all the infrastructure components.
+2.  **Run the setup script:**
+    This script will start all Docker services (Kafka, Spark, Redis, etc.) and create the necessary Kafka topics.
     ```bash
-    docker-compose up -d
+    bash scripts/setup.sh
     ```
-4.  **Install Python Dependencies:**
+    You can check the status of the running containers with `docker-compose -f docker/docker-compose.yml ps`.
+
+## How to Run the Full Pipeline
+
+After running the setup script, open multiple terminal windows to run each component.
+
+1.  **Start the Spark Feature Engineering Job:**
+    This job will listen for validated transactions and update features in Redis and Parquet.
     ```bash
-    pip install -r requirements.txt
+    python spark/feature_engineering.py
     ```
 
-## How to Run
-
-1.  **Start Data Producer:**
-    Run the Kafka producer to simulate a stream of transactions.
+2.  **Start the Flink Validation Job:**
+    This job will listen for raw transactions, validate/enrich them, and send them to the next topic.
+    ```bash
+    python flink/transaction_validation.py
+    ```
+    
+3.  **Start the Kafka Producer:**
+    This script simulates a stream of new transactions.
     ```bash
     python kafka/producer.py
     ```
-2.  **Submit Flink Job:**
-    Deploy the Flink job to start validating transactions.
-    ```bash
-    # (Instructions on how to submit a PyFlink job)
-    ```
-3.  **Run Spark Batch Job:**
-    Execute the Spark job to generate features.
-    ```bash
-    # (Instructions on how to submit a PySpark job)
-    ```
-4.  **Train a Model:**
-    Run the training script to train and register a model with MLflow.
+    
+    *At this point, you have a live data pipeline. You should see output in the Spark terminal as it processes batches.*
+
+4.  **(Optional) Train a New Model:**
+    If you've let the pipeline run for a while to generate some training data, you can train a new model.
     ```bash
     python ray_mlflow/train.py
     ```
-5.  **Start Inference Service:**
-    Launch the Flask API to serve predictions.
+
+5.  **Start the Inference Service:**
+    This launches the API that serves predictions.
     ```bash
     python inference_service/app.py
     ```
+
+## Accessing Services
+
+*   **Spark UI**: `http://localhost:8080`
+*   **Flink UI**: `http://localhost:8081`
+*   **MLflow UI**: `http://localhost:5000`
+*   **Prometheus UI**: `http://localhost:9090`
+*   **Grafana UI**: `http://localhost:3000` (user: `admin`, pass: `admin`)
+
+## Tearing Down
+
+To stop all services and remove the containers and volumes, run the teardown script:
+```bash
+bash scripts/teardown.sh
+```
 ---
 This README provides a high-level overview. For more detailed information on each component, refer to the respective directories.

@@ -2,3 +2,4 @@ flask
 mlflow
 redis
 numpy
+prometheus-flask-exporter

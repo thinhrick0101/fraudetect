@@ -1,8 +1,9 @@
 import unittest
+from unittest.mock import patch, MagicMock
 from pyspark.sql import SparkSession
-from spark.feature_engineering import main as spark_main # Assuming it can be adapted
+from spark.feature_engineering import process_batch
 
-class TestSparkJobs(unittest.TestCase):
+class TestSparkStreaming(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
@@ -12,32 +13,44 @@ class TestSparkJobs(unittest.TestCase):
             .master("local[2]") \
             .getOrCreate()
 
-    def test_feature_engineering(self):
-        """Test the feature engineering logic on a sample DataFrame."""
-        # Create a sample DataFrame
-        transactions = [
-            ("txn1", "user1", 10.0), ("txn2", "user2", 25.0),
-            ("txn3", "user1", 5.0),  ("txn4", "user3", 100.0),
-            ("txn5", "user2", 12.0), ("txn6", "user1", 150.0)
+    @patch('spark.feature_engineering.load_redis_config')
+    def test_process_batch_logic(self, mock_load_redis_config):
+        """
+        Unit test for the process_batch function, which is the core
+        of the Spark streaming job's logic.
+        """
+        # Mock the configuration loader
+        mock_load_redis_config.return_value = {'features_key_prefix': 'test_features'}
+
+        # Create a sample aggregated DataFrame, as would be produced by the streaming query
+        feature_data = [
+            ("user1", 55.0, 3),
+            ("user2", 18.5, 2)
         ]
-        df = self.spark.createDataFrame(transactions, ["transaction_id", "user_id", "amount"])
+        feature_df = self.spark.createDataFrame(feature_data, ["user_id", "avg_amount", "txn_count"])
 
-        # Apply the core logic from your feature engineering script
-        from pyspark.sql.functions import avg, count
-        feature_df = df.groupBy("user_id").agg(
-            avg("amount").alias("avg_amount"),
-            count("transaction_id").alias("txn_count")
-        )
-
-        # Collect results to a dictionary for easy assertion
-        results = {row['user_id']: row for row in feature_df.collect()}
+        # We need to mock the DataFrameWriter that is used inside process_batch
+        # to write to Redis and Parquet.
+        mock_writer = MagicMock()
+        mock_writer.format.return_value.option.return_value.option.return_value.mode.return_value.save.return_value = None
+        mock_writer.mode.return_value.parquet.return_value = None
         
-        # Assertions
-        self.assertEqual(len(results), 3)
-        self.assertAlmostEqual(results['user1']['avg_amount'], 55.0)
-        self.assertEqual(results['user1']['txn_count'], 3)
-        self.assertAlmostEqual(results['user2']['avg_amount'], 18.5)
-        self.assertEqual(results['user2']['txn_count'], 2)
+        with patch('pyspark.sql.DataFrame.write', new=mock_writer):
+            # Call the function with our test DataFrame
+            process_batch(feature_df, epoch_id=1)
+
+            # Assert that the write operations were called
+            self.assertTrue(mock_writer.format.called)
+            self.assertTrue(mock_writer.mode.called)
+            
+            # Check if Redis write was attempted
+            redis_call_args = mock_writer.format.call_args_list[0]
+            self.assertEqual(redis_call_args[0][0], "org.apache.spark.sql.redis")
+            
+            # Check if Parquet write was attempted
+            parquet_call_args = mock_writer.mode.call_args_list[0]
+            self.assertEqual(parquet_call_args[0][0], "append")
+
 
     @classmethod
     def tearDownClass(cls):

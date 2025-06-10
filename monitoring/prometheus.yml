@@ -1,0 +1,16 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'inference_service'
+    scrape_interval: 5s
+    static_configs:
+      # The inference service is running on port 5001 inside the Docker network.
+      # Docker Compose makes it available at the service name 'inference_service'.
+      # NOTE: For this to work from your host machine, you would need to expose
+      # the inference service port in docker-compose.yml.
+      - targets: ['inference_service:5001']
