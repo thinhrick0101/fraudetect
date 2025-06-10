@@ -1,39 +1,34 @@
 from flask import Flask, request, jsonify
 import mlflow.pyfunc
-import redis
 import json
 import numpy as np
+import yaml
+from inference_service.utils.redis_features import get_redis_client
 
 app = Flask(__name__)
 
-# Load the model from the MLflow Model Registry.
-# The model URI is in the format `models:/<model_name>/<version_or_stage>`.
-# We'll load the "Production" stage of our model.
-try:
-    model = mlflow.pyfunc.load_model('models:/fraud_detection_model/Production')
-except Exception as e:
-    # If the model isn't available in production, we can fall back to a specific version or staging.
-    # For this example, we'll exit if it's not found.
-    print(f"Error loading model: {e}")
-    model = None # Or load a fallback model
+def load_mlflow_config(config_path='configs/mlflow_config.yaml'):
+    with open(config_path, 'r') as f:
+        return yaml.safe_load(f)
 
-# Connect to Redis
+# --- Service Initialization ---
+model = None
+redis_client = None
+
 try:
-    redis_client = redis.Redis(host='localhost', port=6379, decode_responses=True)
-except redis.exceptions.ConnectionError as e:
-    print(f"Could not connect to Redis: {e}")
-    redis_client = None
+    mlflow_config = load_mlflow_config()
+    model_uri = f"models:/{mlflow_config['model_name']}/Production"
+    model = mlflow.pyfunc.load_model(model_uri)
+    print(f"Successfully loaded model '{mlflow_config['model_name']}' from '{model_uri}'")
+except Exception as e:
+    print(f"Error loading model: {e}")
+
+redis_client = get_redis_client()
+# --- End Initialization ---
+
 
 def preprocess(transaction_data, user_features):
-    """
-    A placeholder for your feature preprocessing logic.
-    This should transform the raw transaction and user features into the format
-    expected by the model.
-    """
-    # Example: one-hot encode categorical features, scale numerical features, etc.
-    # For the dummy model, we expect a numpy array of a certain shape.
-    # This is highly dependent on your actual model's training.
-    # Let's assume the model expects 10 features.
+    """Placeholder for feature preprocessing logic."""
     features = np.random.rand(1, 10) # Dummy feature vector
     return features
 
@@ -41,9 +36,9 @@ def preprocess(transaction_data, user_features):
 @app.route('/predict', methods=['POST'])
 def predict():
     if not model:
-        return jsonify({"error": "Model not loaded"}), 500
+        return jsonify({"error": "Model not loaded"}), 503
     if not redis_client:
-        return jsonify({"error": "Redis not connected"}), 500
+        return jsonify({"error": "Redis not connected"}), 503
 
     try:
         data = request.json
@@ -53,21 +48,20 @@ def predict():
             return jsonify({"error": "user_id not provided"}), 400
 
         # Fetch pre-computed features from Redis
-        user_features_raw = redis_client.get(f"user_features:{user_id}")
-        user_features = json.loads(user_features_raw) if user_features_raw else {}
-
+        redis_key_prefix = 'user_features' # This could also be in a config
+        user_features_raw = redis_client.hgetall(f"{redis_key_prefix}:{user_id}")
+        
         # Preprocess the input data to create a feature vector
-        features = preprocess(data, user_features)
+        features = preprocess(data, user_features_raw)
 
         # Get prediction from the model
         prediction = model.predict(features)
-
-        # The output of predict() is often a numpy array.
+        
         return jsonify({"is_fraud": bool(prediction[0])})
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        print(f"Prediction error: {e}")
+        return jsonify({"error": "An internal error occurred during prediction."}), 500
 
 if __name__ == '__main__':
-    # Running in debug mode is not recommended for production
-    app.run(host='0.0.0.0', port=5001, debug=True)
+    app.run(host='0.0.0.0', port=5001)

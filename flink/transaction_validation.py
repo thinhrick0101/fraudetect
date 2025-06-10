@@ -1,16 +1,23 @@
-from pyflink.datastream import StreamExecutionEnvironment
 from pyflink.table import StreamTableEnvironment
+from flink.utils import get_flink_env
+import yaml
+
+def load_config(config_path='configs/kafka_config.yaml'):
+    with open(config_path, 'r') as f:
+        return yaml.safe_load(f)
 
 def main():
-    env = StreamExecutionEnvironment.get_execution_environment()
+    env = get_flink_env()
     table_env = StreamTableEnvironment.create(env)
+    config = load_config()
 
-    # Note: In a real-world scenario, you would configure the Kafka connection details
-    # through a configuration file or command-line arguments.
-    # For Flink 1.17+, the syntax for table creation has changed slightly.
-    # This example uses a syntax compatible with recent versions.
+    kafka_bootstrap_servers = config['bootstrap_servers']
+    raw_topic = config['topics']['raw_transactions']
+    validated_topic = config['topics']['validated_transactions']
+    consumer_group = config['consumer_group']
 
-    table_env.execute_sql("""
+    # Create Kafka source table for raw transactions
+    table_env.execute_sql(f"""
         CREATE TABLE transactions (
             `transaction_id` STRING,
             `user_id` STRING,
@@ -18,15 +25,16 @@ def main():
             `timestamp` DOUBLE
         ) WITH (
             'connector' = 'kafka',
-            'topic' = 'transactions',
-            'properties.bootstrap.servers' = 'localhost:9092',
-            'properties.group.id' = 'flink_fraud_detector',
+            'topic' = '{raw_topic}',
+            'properties.bootstrap.servers' = '{kafka_bootstrap_servers}',
+            'properties.group.id' = '{consumer_group}',
             'scan.startup.mode' = 'latest-offset',
             'format' = 'json'
         );
     """)
 
-    table_env.execute_sql("""
+    # Create Kafka sink table for validated transactions
+    table_env.execute_sql(f"""
         CREATE TABLE validated_transactions (
             `transaction_id` STRING,
             `user_id` STRING,
@@ -34,8 +42,8 @@ def main():
             `timestamp` DOUBLE
         ) WITH (
             'connector' = 'kafka',
-            'topic' = 'validated_transactions',
-            'properties.bootstrap.servers' = 'localhost:9092',
+            'topic' = '{validated_topic}',
+            'properties.bootstrap.servers' = '{kafka_bootstrap_servers}',
             'format' = 'json'
         );
     """)

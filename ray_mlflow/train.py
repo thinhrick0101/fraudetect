@@ -1,9 +1,10 @@
 import ray
-import mlflow
 from ray import tune
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 import numpy as np
+import mlflow
+from ray_mlflow.model_utils import setup_mlflow, register_best_model
 
 def load_data():
     # This is a placeholder for loading your actual training data.
@@ -36,17 +37,13 @@ def train_model(config):
     tune.report(accuracy=accuracy)
 
 def main():
-    # Set the MLflow tracking URI. You would have an MLflow server running.
-    # For local testing, it can write to a local `mlruns` directory.
-    mlflow.set_tracking_uri("http://localhost:5000")
-    mlflow.set_experiment("fraud_detection_training")
-
+    model_name = setup_mlflow()
     ray.init(ignore_reinit_error=True)
 
     # Define the hyperparameter search space for Ray Tune
     search_space = {
-        "n_estimators": tune.grid_search([50, 100, 150]),
-        "max_depth": tune.choice([10, 20, 30])
+        "n_estimators": tune.grid_search([50, 100]),
+        "max_depth": tune.choice([10, 20])
     }
 
     # Run the hyperparameter tuning job
@@ -56,18 +53,11 @@ def main():
         metric="accuracy",
         mode="max",
         num_samples=1, # In a real run, you'd use more samples
-        resources_per_trial={'cpu': 1, 'gpu': 0}
+        resources_per_trial={'cpu': 1}
     )
 
     print("Best hyperparameters found were: ", analysis.best_config)
-    
-    # Register the best model in the MLflow Model Registry
-    best_run = analysis.get_best_run(metric="accuracy", mode="max")
-    if best_run:
-        best_model_uri = f"runs:/{best_run.run_id}/fraud_detection_model"
-        model_name = "fraud_detection_model"
-        mlflow.register_model(model_uri=best_model_uri, name=model_name)
-        print(f"Registered model '{model_name}' from run '{best_run.run_id}'")
+    register_best_model(analysis, model_name)
 
     ray.shutdown()
 
