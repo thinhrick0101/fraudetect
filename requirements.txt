@@ -1,0 +1,13 @@
+# Core libraries for the project
+kafka-python
+apache-flink
+pyspark
+ray[tune]
+mlflow
+redis
+scikit-learn
+flask
+numpy
+
+# For spark-redis connector, you'll also need to provide the JAR, e.g.:
+# --packages com.redislabs:spark-redis_2.12:3.2.0

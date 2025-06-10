@@ -1,0 +1,5 @@
+bootstrap_servers: "localhost:9092"
+topics:
+  raw_transactions: "transactions"
+  validated_transactions: "validated_transactions"
+consumer_group: "fraud_detection_group"

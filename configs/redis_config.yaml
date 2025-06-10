@@ -1,0 +1,4 @@
+host: "localhost"
+port: 6379
+db: 0
+features_key_prefix: "user_features"
